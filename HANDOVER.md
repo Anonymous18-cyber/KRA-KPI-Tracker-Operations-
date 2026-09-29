@@ -1908,3 +1908,79 @@ checked against what a person would actually see or read.**
   page (18.10).
 
 A test that asserts the number is not a test that anybody can read the number.
+
+---
+
+# 20. THE DAY THE APP CHANGED ITS OWN DATABASE — 29 Sep 2026
+
+The dashboard showed **0 employees, 0 assignments, 0 departments** on both `/dev`
+and `/exec`. Nothing was deleted. The app had quietly pointed itself at a
+different, empty spreadsheet — and had done so at least three times before
+anyone noticed.
+
+## The mechanism
+
+`ss_()` resolved the backend like this:
+
+```js
+var id = props.getProperty(PROP_DB);
+if (id) { try { _SS = SpreadsheetApp.openById(id); return _SS; } catch (e) {} }
+_SS = bound || SpreadsheetApp.create(APP_NAME + ' — Backend');
+props.setProperty(PROP_DB, _SS.getId());
+```
+
+`openById` fails once — a transient Drive error is enough — and the empty
+`catch` swallows it. The app then:
+
+1. creates a new blank spreadsheet,
+2. **overwrites `PERFORMOS_DB_ID`, the only pointer to the real database**,
+3. seeds the new file and stamps `PERFORMOS_SEEDED`,
+
+so every subsequent run agrees the empty sheet is the database. No error, no
+log line, no difference in behaviour except that every number is gone.
+
+**The evidence it had happened before:** Drive held **three** files named
+`PerformOS — Backend` (Sep 9, Sep 9, Sep 22) plus a `Performance Tracker —
+Backend` created at 12:29 that day. Each one is a previous occurrence.
+
+## Why it resisted the obvious fix
+
+Setting `PERFORMOS_DB_ID` back by hand did not work, and could not: the next
+page load called `ss_()`, `openById` failed again, and the property was
+overwritten before anyone could reload. **The repair had to be deployed before
+the repair could be applied.**
+
+## The fix — v67
+
+**An id that will not open is now a hard failure.** It throws, naming the id it
+could not open and saying why it refuses to substitute one. An outage is
+recoverable in five minutes; a silently swapped database is only recoverable if
+somebody remembers which file it was.
+
+**Seeding refuses to empty a populated database.** `seedFromEmbedded_` wipes all
+eight tables, and the only thing between that and live data was one script
+property. It now refuses when EMPLOYEES has rows; `provisionAndSeed()` remains
+the deliberate way in.
+
+## What the fix does NOT explain
+
+**Why `openById` failed in the first place is still unknown.** The file existed,
+was owned by the same account and was not in the Trash. The next occurrence will
+throw with the id and the underlying Drive message attached, which is the
+diagnostic that has never existed before. Until then this is unexplained rather
+than solved.
+
+## Two things this should change
+
+**There is no backup of the backend.** Recovery worked because the old file
+happened to still be in Drive and somebody recognised the name. A weekly copy of
+the backend spreadsheet, or at minimum a note of its id somewhere outside the
+script properties, would turn this from detective work into a two-minute fix.
+
+**Three diagnoses were wrong before the right one.** A missing null guard, then
+`isLeaver_`, then `commit_` — each plausible, each deployed or half-deployed
+before being tested. The one that worked came from **looking at the artefact**:
+a `Sheet1` tab and a version history starting at 12:29 said "this file is new"
+far more clearly than any amount of reading the code did. When data is missing,
+identify *which* database is being read before reasoning about what happened to
+its contents.

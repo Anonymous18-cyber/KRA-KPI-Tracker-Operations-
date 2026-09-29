@@ -542,5 +542,45 @@ console.log('  running it again is harmless:');
 var again2 = cleanupLeaverRows();
 ck('nothing left to delete', /DELETED 0 PLAN and 0 PERFORMANCE/.test(again2), true);
 
+console.log('\n--- AN ASSIGNMENT WITH NO TARGETS ROW AT ALL ---');
+/* THE GAP THIS CLOSES, and it is the worst one this suite has had.
+
+   Every fixture here gave every assignment a TARGETS row, so `parsed` was
+   never null when a row was built. Plenty of real assignments have no ladder
+   in any period. A change that read `parsed.kind` without a guard therefore
+   passed 1,837 assertions, went to production, threw inside buildModel_,
+   took apiBootstrap down with it and emptied the ENTIRE dashboard — every
+   row, for every person, on /dev and /exec alike.
+
+   A suite that cannot tell the difference between "the dashboard works" and
+   "the dashboard is blank" is not measuring what it claims to. So: a fourth
+   KPI with an assignment, no TARGETS row in any month, and no plan. */
+DB[T.KRAS].push({ id: 'k9', team_id: 't1', name: 'Reporting & Escalations',
+                  perspective: 'Process' });
+DB[T.KPIS].push({ id: 'p9', kra_id: 'k9', name: 'Adherence (Total)' });
+DB[T.ASSIGN].push({ id: 'a9', employee_id: 'E1', kra_id: 'k9', kpi_id: 'p9',
+                    weightage: 0, status: 'Active' });
+
+var built = null, threw = null;
+try { built = rowsOf('per_2026-07'); } catch (e) { threw = e; }
+ck('the model still builds', threw === null ? 'no throw' : String(threw.message), 'no throw');
+ck('  and every other row survived with it',
+   built && built.p1 && built.p2 && built.p3 ? 'all present' : 'MISSING', 'all present');
+ck('the laddlerless row is there too', !!(built && built.p9), true);
+ck('  with an empty ladder, not a borrowed one',
+   built && (built.p9.bands || []).join('|'), '||||');
+ck('  and is NOT marked as a rate — there is no ladder to call a ratio',
+   built && built.p9.plan_unit, '');
+ck('  nor does it invent a target', String(built && built.p9.plan_target), 'null');
+ck('  nor a level', String(built && built.p9.level), 'null');
+
+/* And the whole model, not just the row: a throw here empties the page. */
+var whole = null, threw2 = null;
+try { whole = buildModel_('per_2026-07'); } catch (e2) { threw2 = e2; }
+ck('buildModel_ returns a model, not an exception',
+   threw2 === null ? 'ok' : String(threw2.message), 'ok');
+ck('  carrying every assignment', whole && whole.rows.length >= 4, true);
+ck('  and the row set is not empty', !!(whole && whole.rows.length), true);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

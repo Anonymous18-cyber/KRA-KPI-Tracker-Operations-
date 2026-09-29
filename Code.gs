@@ -585,7 +585,31 @@ function ss_() {
   if (_SS) return _SS;
   var props = PropertiesService.getScriptProperties();
   var id = props.getProperty(PROP_DB);
-  if (id) { try { _SS = SpreadsheetApp.openById(id); return _SS; } catch (e) {} }
+  /* AN ID THAT WILL NOT OPEN IS A HARD FAILURE, NEVER A NEW DATABASE.
+   *
+   * This line used to read  catch (e) {}  and fall through to create(). One
+   * transient Drive error was then enough to detach the app from its data
+   * PERMANENTLY: it minted an empty backend, overwrote PROP_DB — the only
+   * pointer there is — seeded the new file and stamped PERFORMOS_SEEDED, so
+   * every later run agreed the empty sheet was the database. Nothing was
+   * deleted and nothing said anything. It had happened at least three times
+   * before anyone noticed, leaving three orphaned backends in Drive.
+   *
+   * An outage is recoverable in five minutes. A silently swapped database is
+   * only recoverable if somebody happens to remember which file it was. So
+   * this throws, and names the id it could not open. */
+  if (id) {
+    try { _SS = SpreadsheetApp.openById(id); return _SS; }
+    catch (e) {
+      throw new Error('Cannot open the backend spreadsheet ' + id + ' — ' +
+        (e && e.message || e) + '. Refusing to create a replacement: that ' +
+        'would point the app at an empty database and overwrite the only ' +
+        'record of where the real one is. Check the file still exists and is ' +
+        'shared with this account, then reload. To move the app to a ' +
+        'different backend, set ' + PROP_DB + ' deliberately.');
+    }
+  }
+  /* No id at all — a genuine first run, and the only time creating is right. */
   var bound = null;
   try { bound = SpreadsheetApp.getActiveSpreadsheet(); } catch (e) {}
   _SS = bound || SpreadsheetApp.create(APP_NAME + ' — Backend');
@@ -1264,9 +1288,15 @@ function aggKind_(unit, kpiName, parsed, hasTarget) {
      * of it: ratio-shaped ladder, and never planned. A ratio-shaped ladder on
      * a KPI that IS planned elsewhere means a bare actual is a quantity still
      * waiting for its denominator — marking that 'ratio' would render 5
-     * sellers as 500%. */
+     * sellers as 500%.
+     *
+     * AND parsed IS NULL when an assignment has no TARGETS row in any period, and
+     * plenty do. Reading .kind off it threw inside buildModel_, which took
+     * apiBootstrap down with it and emptied the whole dashboard on both /dev
+     * and /exec — not just the rate rows. aggKind_ two lines up guards for
+     * exactly this and that guard should have been copied with the idea. */
     if (!planEver[String(a.employee_id) + '|' + String(a.kpi_id)] &&
-        parsed.kind === 'numeric' && isRatioLadder_(parsed.values).ok) {
+        parsed && parsed.kind === 'numeric' && isRatioLadder_(parsed.values).ok) {
       planUnit = 'ratio';
     }
     var row = {
@@ -8535,6 +8565,20 @@ function seedFromEmbedded_() {
     { key: 'rollup', value: JSON.stringify({
         description: 'Weightage is per KPI and totals 100% per person, so the overall level is one weighted mean over that person’s scored KPIs. A KRA level is the same mean renormalised within the KRA.' }) }
   ]);
+  /* SEEDING MUST NOT EMPTY A DATABASE THAT ALREADY HAS PEOPLE IN IT.
+     The eight lines below wipe every table. That is right for a new backend
+     and catastrophic for a live one, and the only thing standing between them
+     was a single script property: lose PERFORMOS_SEEDED and the next page load
+     empties the company's scorecards. Seeding a populated database is now a
+     refusal, not a silent reset — provisionAndSeed() is the deliberate way in
+     and it clears the flag on purpose. */
+  var already = read_(T.EMPLOYEES).length;
+  if (already > 0 &&
+      PropertiesService.getScriptProperties().getProperty('PERFORMOS_SEEDED') === '3') {
+    throw new Error('Refusing to seed: the backend already holds ' + already +
+      ' employees. Seeding empties every table. If you really mean to reset ' +
+      'it, run provisionAndSeed().');
+  }
   write_(T.TEAMS, []); write_(T.EMPLOYEES, []); write_(T.KRAS, []); write_(T.KPIS, []);
   write_(T.ASSIGN, []); write_(T.TARGETS, []); write_(T.PERF, []); write_(T.AUDIT, []);
 
