@@ -2032,16 +2032,32 @@ the message carries Drive's own error. Nothing else in this runbook will help.
 → `importSellerTat()` → `importOmpTransit()` → `importOmpDispatch()` →
 `importOmpTracking()`. Everything except hand-entered levels comes back.
 
-## 20.3 What is still not explained
+## 20.3 The root cause — and a correction
 
-Four unrecognised ids reached `PERFORMOS_DB_ID` on 29 Sep. Two of them —
-`1NX70cTB…`, `1J9yf36o…` — resolve to no file this account can open, and
-`SpreadsheetApp.create()` would have left a real file behind, so they did not
-come from the app. The most likely account is the manual repointing that was
-going on at the time. **It is written down as unexplained rather than closed**,
-because the alternative reading is that something else can write that property,
-and only one line in the codebase can — which would mean that reading is wrong.
+This section previously said the unrecognised ids "did not come from the app"
+and recorded the cause as unexplained. **That was wrong**, and the way it was
+wrong is the lesson.
 
-The v67 guard means a recurrence now fails loudly with the id attached instead
-of silently minting a replacement, so the next occurrence will say more than
-this one did.
+The guard in `ss_()` was **pushed but never deployed**. `clasp push` updates the
+`/dev` head only; `/exec` stays pinned to its version until `clasp deploy`. So
+for two hours the editor ran the fixed code and threw correctly, while every
+dashboard load ran the ORIGINAL silent-create path: fail to open, mint a blank
+spreadsheet, overwrite `PERFORMOS_DB_ID`. Five bad ids, five page loads.
+
+Each manual repoint was undone by the next page view. That is why the property
+appeared to change by itself, and why blaming the hand-editing looked plausible
+— it was not the person typing, it was the app still running the bug the fix
+was supposed to have removed.
+
+**The evidence was visible throughout.** The dashboard showed `0`, not an error.
+Guarded code throws. A zero meant a spreadsheet had opened successfully — one
+the app had just created. An error page and an empty page mean opposite things
+here, and reading them as one symptom cost about two hours.
+
+**A guard that is not deployed protects nothing.** After changing anything that
+runs in the web app: `clasp deploy`, then confirm the BEHAVIOUR changed rather
+than confirming the code changed. The editor and `/exec` can disagree for as
+long as you let them, and they disagree silently.
+
+Fixed for real in **v69**.
+
