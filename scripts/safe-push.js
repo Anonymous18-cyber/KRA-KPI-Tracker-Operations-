@@ -52,12 +52,29 @@ if (pull.status !== 0) {
 }
 
 /* ---- compare live against the fingerprint of our last push -------------- */
+/* CLASP PULLS A .gs FILE AS .js. Looking for Code.gs in the pulled copy found
+   nothing, which read as "somebody else changed it" — a guard that cries wolf
+   gets --force'd past within a day, so this matters more than it looks. */
+function pulled(dir, f) {
+  var alts = [f];
+  if (/\.gs$/.test(f)) alts.push(f.replace(/\.gs$/, '.js'));
+  if (/\.js$/.test(f)) alts.push(f.replace(/\.js$/, '.gs'));
+  for (var i = 0; i < alts.length; i++) {
+    var t = read(path.join(dir, alts[i]));
+    if (t !== null) return t;
+  }
+  return null;
+}
 var live = {}, mine = {}, missing = [];
 FILES.forEach(function (f) {
-  var l = read(path.join(tmp, f));
+  var l = pulled(tmp, f);
   if (l === null) missing.push(f); else live[f] = sha(l);
   mine[f] = sha(read(path.join(ROOT, f)) || '');
 });
+if (missing.length) {
+  die('These files are not in the live project at all: ' + missing.join(', ') +
+      '\nThat is not drift, it is a different project. Check .clasp.json.');
+}
 var last = null;
 try { last = JSON.parse(read(STAMP)); } catch (e) { last = null; }
 

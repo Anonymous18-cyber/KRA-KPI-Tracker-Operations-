@@ -8894,6 +8894,103 @@ function shareBackendWithAdmins() {
   return txt;
 }
 
+/* ==========================================================================
+ * SET UP A SANDBOX COPY OF THIS APP
+ *
+ * Created 29 Sep 2026 so two people can work without overwriting each other.
+ * The sandbox is a SEPARATE Apps Script project with a SEPARATE backend: break
+ * anything in it, reseed it, deploy it, and production never notices.
+ *
+ * Run this ONCE, in the sandbox project, and it does the whole setup: copies
+ * production's backend so the data is realistic, points this project at the
+ * copy, and carries the admin list across.
+ *
+ * IT REFUSES TO RUN IN PRODUCTION. That guard is the entire safety of this
+ * function — without it, one careless run would repoint the live app at a copy
+ * and every edit after that would go into a file nobody is looking at. The
+ * script id is checked, not the title, because a title can be changed by
+ * anybody with the editor open.
+ * ======================================================================== */
+var PROD_SCRIPT_ID_ = '1BYfLvwrBaKQUnFw3tXd4RMeZxkwM4urwORHIw4kWxaOrDoyD-kaVjeiO';
+
+function setUpSandbox() {
+  var nl = String.fromCharCode(10), out = [];
+  var me = '';
+  try { me = ScriptApp.getScriptId(); } catch (e) { me = ''; }
+
+  if (me === PROD_SCRIPT_ID_) {
+    var no = 'REFUSING: this is the PRODUCTION project.' + nl +
+      'setUpSandbox() repoints the app at a copy of the backend. Run in' + nl +
+      'production it would leave the live dashboard reading a copy while' + nl +
+      'everybody kept editing the original. Run it in the sandbox project.';
+    Logger.log(no); return no;
+  }
+  out.push('script  : ' + (me || '(unknown)') + '   (not production, good)');
+
+  var props = PropertiesService.getScriptProperties();
+  var existing = props.getProperty(PROD_DB_PROP_NAME_());
+  if (existing) {
+    out.push('');
+    out.push('This sandbox already points at ' + existing + '.');
+    out.push('Nothing changed. Delete PERFORMOS_DB_ID first if you want a fresh copy.');
+    var same = out.join(nl); Logger.log(same); return same;
+  }
+
+  /* --- a copy of production's data, so the sandbox is worth testing in --- */
+  var copy;
+  try {
+    var src = DriveApp.getFileById(KNOWN_BACKEND_ID_);
+    copy = src.makeCopy('PerformOS — Backend (SANDBOX ' +
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd') + ')');
+  } catch (e) {
+    out.push('');
+    out.push('Could not copy production’s backend: ' + (e && e.message || e));
+    out.push('That is not fatal. Leave PERFORMOS_DB_ID unset and the first run');
+    out.push('will create an empty backend and seed it from SRC_SEED instead —');
+    out.push('38 people and the framework, but no targets or achievements.');
+    var nocopy = out.join(nl); Logger.log(nocopy); return nocopy;
+  }
+  props.setProperty(PROD_DB_PROP_NAME_(), copy.getId());
+  /* seeded already, because it is a copy of a seeded database */
+  props.setProperty('PERFORMOS_SEEDED', '3');
+
+  out.push('backend : ' + copy.getName());
+  out.push('          ' + copy.getId());
+  out.push('          https://docs.google.com/spreadsheets/d/' + copy.getId() + '/edit');
+
+  /* --- carry the admin list across so the sandbox is usable -------------- */
+  var admins = '';
+  try {
+    var ss = SpreadsheetApp.openById(copy.getId());
+    var sh = ss.getSheetByName('SETTINGS');
+    if (sh) { /* nothing needed; admins live in script properties, not the sheet */ }
+  } catch (e) { /* not fatal */ }
+  admins = props.getProperty(PROD_ADMINS_PROP_NAME_()) || '';
+  if (!admins) {
+    props.setProperty(PROD_ADMINS_PROP_NAME_(),
+      'srinivasareddy.dundi@recykal.com, vishwash.tiwari@recykal.com');
+    out.push('admins  : set to the same two people as production');
+  } else {
+    out.push('admins  : already set (' + admins + ')');
+  }
+
+  out.push('');
+  out.push('Sandbox ready. Nothing here touches production:');
+  out.push('  · its own script, its own versions, its own deployments');
+  out.push('  · its own backend — a copy taken just now');
+  out.push('  · reseed, break or delete it freely');
+  out.push('');
+  out.push('Deploy it with clasp deploy from the sandbox folder, and use its own');
+  out.push('/dev and /exec. Production is a different project entirely.');
+  var txt = out.join(nl);
+  Logger.log(txt);
+  return txt;
+}
+/* The property names as literals, so this function still reads correctly if it
+   is ever lifted into a script that does not define PROP_DB. */
+function PROD_DB_PROP_NAME_() { return 'PERFORMOS_DB_ID'; }
+function PROD_ADMINS_PROP_NAME_() { return 'PERFORMOS_ADMINS'; }
+
 function ensureSeeded_() {
   var props = PropertiesService.getScriptProperties();
   if (props.getProperty('PERFORMOS_SEEDED') === '3') return false;

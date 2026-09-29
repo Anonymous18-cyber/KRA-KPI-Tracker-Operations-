@@ -2131,3 +2131,43 @@ merged, and reach the real project through one safe-push and one deploy.
 
 That is more setup than an agreement, and it is the only arrangement that does
 not rely on both people remembering who has the pen.
+
+## 21.1 The two projects
+
+Set up 29 Sep 2026.
+
+| | Production | Sandbox |
+|---|---|---|
+| script | `1BYfLvwrBaKQUnFw3tXd4RMeZxkwM4urwORHIw4kWxaOrDoyD-kaVjeiO` | `1A8yLFO8sJm1sj7xBelT6MD4G-MO2AuSVBxP_d5prqZxD0rY9P1_lZEDy` |
+| backend | `1IxJPhwKnNIS_WxstqgwflRjfPBsuwm3LQVyvRUXDAzE` | a copy, in Vishwash's Drive |
+| local folder | `kra-kpi-tracker/` | `kra-kpi-sandbox/` |
+| who deploys | Srinivas | Vishwash |
+
+They share nothing: separate scripts, separate versions, separate deployments,
+separate databases. Reseed or break the sandbox freely.
+
+**`setUpSandbox()` does the whole setup and refuses to run in production** — it
+checks the script id, not the title, because a title is one keystroke for
+anybody with the editor open. Run in production it would leave the live
+dashboard reading a copy while everyone kept editing the original.
+
+**WHOEVER RUNS setUpSandbox OWNS THE COPY.** `makeCopy` creates the file in the
+Drive of the account running it, which is correct — but it means the sandbox's
+web app must be deployed BY THAT SAME PERSON. The manifest is
+`executeAs: USER_DEPLOYING`, so a deployment made from somebody else's clasp
+credentials runs as them and cannot open the copy. That is the same fault as
+§20, one layer along: **deploy the sandbox from its owner's own account**, via
+Deploy > New deployment in the editor.
+
+## 21.2 The flow
+
+```
+Vishwash                          Srinivas
+  sandbox project + own backend
+  branch, commit, open a PR   -->  review, merge
+                                   node scripts/safe-push.js
+                                   clasp deploy
+```
+
+`clasp push` only moves `/dev`. Production stays pinned until `clasp deploy`,
+so the person deploying decides what is live.
