@@ -515,6 +515,7 @@ var DIAG_FUNCTIONS_ = {
   previewOmpTransit: previewOmpTransit,
   previewOmpDispatch: previewOmpDispatch,
   profileOmpCategoricals: profileOmpCategoricals,
+  findBackends: findBackends,
   previewOmpTracking: previewOmpTracking
 };
 
@@ -8540,6 +8541,256 @@ function assignLeads_() {
  * platform is usable before anyone runs an import. apiImportFromSource()
  * refreshes it from the live workbook.
  * ======================================================================== */
+/* ==========================================================================
+ * WHICH SPREADSHEET IS THE BACKEND?
+ *
+ * Written on 29 Sep 2026, after ss_() spent weeks quietly minting replacement
+ * backends whenever openById failed (see HANDOVER §20). Drive ended up holding
+ * four candidates with near-identical names, and choosing between them by
+ * eye — by date, or by which row of a search result was highlighted — put a
+ * WRONG id into PERFORMOS_DB_ID twice.
+ *
+ * So this does not ask anybody to recognise a file. It opens every candidate
+ * and reports what is actually inside it: how many employees, how many
+ * assignments, how many performance rows, and when it was last touched. The
+ * one with rows in it is the database. Copy its id.
+ *
+ * DELIBERATELY DOES NOT CALL ensureSeeded_(), and must not: that goes through
+ * ss_(), which throws when the current pointer is broken — which is exactly
+ * when somebody needs to run this.
+ *
+ * Read-only. It opens files and counts rows; it writes nothing anywhere.
+ * ======================================================================== */
+function findBackends() {
+  var nl = String.fromCharCode(10), out = [];
+  var props = PropertiesService.getScriptProperties();
+  var current = props.getProperty(PROP_DB) || '(not set)';
+
+  out.push('PERFORMOS_DB_ID is currently: ' + current);
+  out.push('');
+
+  /* Every spreadsheet whose name looks like a backend, however it was named
+     when it was made — the app has been called PerformOS and Performance
+     Tracker at different times. */
+  var seen = {}, cands = [];
+  ['PerformOS — Backend', 'Performance Tracker — Backend', 'Backend'].forEach(function (nm) {
+    var it;
+    try { it = DriveApp.getFilesByName(nm); } catch (e) { return; }
+    while (it.hasNext()) {
+      var f = it.next();
+      if (seen[f.getId()]) continue;
+      seen[f.getId()] = true;
+      cands.push(f);
+    }
+  });
+  /* and the current pointer, even if its name does not match — it may be the
+     right file under a name nobody expected */
+  if (current !== '(not set)' && !seen[current]) {
+    try { cands.push(DriveApp.getFileById(current)); seen[current] = true; } catch (e) {
+      out.push('!! the id in PERFORMOS_DB_ID cannot even be opened as a Drive file:');
+      out.push('   ' + current);
+      out.push('   ' + (e && e.message || e));
+      out.push('');
+    }
+  }
+
+  if (!cands.length) {
+    out.push('No candidate spreadsheets found in this account.');
+    var none = out.join(nl); Logger.log(none); return none;
+  }
+
+  out.push('=== EVERY CANDIDATE, AND WHAT IS ACTUALLY IN IT ===');
+  out.push('');
+  out.push('  ' + pad_('employees', 11) + pad_('assign', 9) + pad_('perf', 8) +
+    pad_('modified', 20) + 'name / id');
+  out.push('');
+
+  var best = null;
+  cands.forEach(function (f) {
+    var id = f.getId(), name = f.getName(), when = '';
+    try { when = Utilities.formatDate(f.getLastUpdated(), Session.getScriptTimeZone(),
+                                      'yyyy-MM-dd HH:mm'); } catch (e) { when = '?'; }
+    var emp = '-', asg = '-', prf = '-', note = '';
+    try {
+      var ss = SpreadsheetApp.openById(id);
+      function count(tab) {
+        var sh = ss.getSheetByName(tab);
+        if (!sh) return '(no tab)';
+        return Math.max(0, sh.getLastRow() - 1);
+      }
+      emp = count('EMPLOYEES'); asg = count('ASSIGNMENTS'); prf = count('PERFORMANCE');
+      if (typeof emp === 'number' && (best === null || emp > best.emp)) {
+        best = { id: id, name: name, emp: emp, asg: asg, prf: prf };
+      }
+    } catch (e) {
+      note = '   << CANNOT OPEN: ' + (e && e.message || e);
+    }
+    out.push('  ' + pad_(String(emp), 11) + pad_(String(asg), 9) + pad_(String(prf), 8) +
+      pad_(when, 20) + name + (id === current ? '   <== CURRENT' : ''));
+    out.push('  ' + pad_('', 48) + id + note);
+    out.push('');
+  });
+
+  if (best && best.emp > 0) {
+    out.push('=== THE ONE WITH DATA IN IT ===');
+    out.push('  ' + best.name);
+    out.push('  ' + best.id);
+    out.push('  ' + best.emp + ' employees, ' + best.asg + ' assignments, ' +
+      best.prf + ' performance rows');
+    out.push('');
+    if (best.id === current) {
+      out.push('  That is already what PERFORMOS_DB_ID points at. If the dashboard');
+      out.push('  is still empty the fault is not the pointer.');
+    } else {
+      out.push('  Set PERFORMOS_DB_ID to that id — Project Settings > Script');
+      out.push('  Properties — then run whoAmI() to confirm before reloading.');
+    }
+  } else {
+    out.push('No candidate has any employees in it. The framework can be rebuilt');
+    out.push('with refreshFrameworkFromSource() followed by importTargets().');
+  }
+  var txt = out.join(nl);
+  Logger.log(txt);
+  return txt;
+}
+
+/* ==========================================================================
+ * POINT THE APP AT THE BACKEND THAT ACTUALLY HAS THE DATA
+ *
+ * PERFORMOS_DB_ID was set by hand three times on 29 Sep 2026 and was wrong
+ * every time — two of the three ids were not files this account could open at
+ * all. That is not carelessness: a Google file id is 44 characters of noise,
+ * it is copied out of a URL among a dozen open tabs, and nothing checks it
+ * until the whole dashboard is blank.
+ *
+ * So the id stops being typed. This finds the candidate with the most
+ * employees in it, sets the property to that, and then REOPENS it to prove the
+ * app can reach it before reporting success.
+ *
+ * It writes exactly one script property and nothing else. It creates no
+ * spreadsheet, touches no row, and refuses outright if no candidate has any
+ * employees — there is no sense repointing at another empty file.
+ * ======================================================================== */
+function repointToBackendWithData() {
+  var nl = String.fromCharCode(10), out = [];
+  var props = PropertiesService.getScriptProperties();
+  var before = props.getProperty(PROP_DB) || '(not set)';
+  out.push('before: ' + before);
+
+  var seen = {}, best = null, looked = 0;
+  ['PerformOS — Backend', 'Performance Tracker — Backend', 'Backend'].forEach(function (nm) {
+    var it;
+    try { it = DriveApp.getFilesByName(nm); } catch (e) { return; }
+    while (it.hasNext()) {
+      var f = it.next(), id = f.getId();
+      if (seen[id]) continue;
+      seen[id] = true; looked++;
+      try {
+        var ss = SpreadsheetApp.openById(id);
+        var sh = ss.getSheetByName('EMPLOYEES');
+        var emp = sh ? Math.max(0, sh.getLastRow() - 1) : 0;
+        var ash = ss.getSheetByName('ASSIGNMENTS');
+        var asg = ash ? Math.max(0, ash.getLastRow() - 1) : 0;
+        var psh = ss.getSheetByName('PERFORMANCE');
+        var prf = psh ? Math.max(0, psh.getLastRow() - 1) : 0;
+        if (emp > 0 && (best === null || emp > best.emp ||
+                        (emp === best.emp && prf > best.prf))) {
+          best = { id: id, name: f.getName(), emp: emp, asg: asg, prf: prf };
+        }
+      } catch (e) { /* cannot open it, so it cannot be the answer */ }
+    }
+  });
+
+  out.push('looked at ' + looked + ' candidate spreadsheet(s)');
+  if (!best) {
+    out.push('');
+    out.push('NOTHING CHANGED. No candidate has a single employee in it.');
+    out.push('Rebuild instead: refreshFrameworkFromSource() then importTargets().');
+    var none = out.join(nl); Logger.log(none); return none;
+  }
+
+  /* TIE-BREAK ON PERFORMANCE ROWS, not just employees. Two backends can both
+     hold the full 38-person framework while only one carries the achievements
+     — which is exactly the case here, and picking the wrong one would look
+     right and quietly lose every imported number. */
+  out.push('');
+  out.push('chosen: ' + best.name);
+  out.push('        ' + best.id);
+  out.push('        ' + best.emp + ' employees, ' + best.asg + ' assignments, ' +
+    best.prf + ' performance rows');
+
+  if (best.id === before) {
+    out.push('');
+    out.push('That is ALREADY what the property says. Nothing written.');
+    out.push('If the dashboard is still empty, the pointer is not the fault.');
+    var same = out.join(nl); Logger.log(same); return same;
+  }
+
+  props.setProperty(PROP_DB, best.id);
+  _SS = null;   /* drop the cached handle, or this run keeps the old one */
+
+  /* PROVE IT, rather than report success on having written a string. */
+  var check = '';
+  try {
+    var ss2 = SpreadsheetApp.openById(props.getProperty(PROP_DB));
+    var e2 = ss2.getSheetByName('EMPLOYEES');
+    check = 'reopened it: ' + (e2 ? Math.max(0, e2.getLastRow() - 1) : 0) + ' employees';
+  } catch (e) {
+    check = '!! WROTE THE PROPERTY BUT CANNOT REOPEN IT: ' + (e && e.message || e);
+  }
+  out.push('');
+  out.push('after : ' + props.getProperty(PROP_DB));
+  out.push(check);
+  out.push('');
+  out.push('Now run whoAmI() to confirm, then reload the dashboard.');
+  var txt = out.join(nl);
+  Logger.log(txt);
+  return txt;
+}
+
+/* The backend, by id, hardcoded on 29 Sep 2026 after PERFORMOS_DB_ID was set
+   by hand three times and was wrong every time. findBackends() proved this one
+   holds 38 employees, 209 assignments and 371 performance rows.
+
+   Nothing here searches, chooses or accepts input. It writes one property and
+   then REOPENS the file to prove the app can reach it — because "the property
+   now says the right thing" and "the app can read the database" are different
+   claims and only the second one matters. */
+var KNOWN_BACKEND_ID_ = '1IxJPhwKnNIS_WxstqgwflRjfPBsuwm3LQVyvRUXDAzE';
+
+function useKnownBackend() {
+  var nl = String.fromCharCode(10), out = [];
+  var props = PropertiesService.getScriptProperties();
+  out.push('before : ' + (props.getProperty(PROP_DB) || '(not set)'));
+
+  props.setProperty(PROP_DB, KNOWN_BACKEND_ID_);
+  _SS = null;                      /* drop the cached handle for this run */
+  _CACHE = {}; _DIRTY = {};        /* and anything read from the old one */
+
+  out.push('set to : ' + KNOWN_BACKEND_ID_);
+  out.push('reads  : ' + props.getProperty(PROP_DB));
+  out.push('');
+  try {
+    var ss = SpreadsheetApp.openById(KNOWN_BACKEND_ID_);
+    out.push('opened : ' + ss.getName());
+    ['EMPLOYEES', 'ASSIGNMENTS', 'TARGETS', 'PERFORMANCE', 'PERIODS'].forEach(function (t) {
+      var sh = ss.getSheetByName(t);
+      out.push('  ' + pad_(t, 14) + (sh ? Math.max(0, sh.getLastRow() - 1) + ' rows'
+                                        : '(no such tab)'));
+    });
+    out.push('');
+    out.push('The app can reach the database. Reload the dashboard.');
+  } catch (e) {
+    out.push('!! CANNOT OPEN IT: ' + (e && e.message || e));
+    out.push('');
+    out.push('The property is set correctly and the file still will not open,');
+    out.push('so the fault is access to that file, not the pointer.');
+  }
+  var txt = out.join(nl);
+  Logger.log(txt);
+  return txt;
+}
+
 function ensureSeeded_() {
   var props = PropertiesService.getScriptProperties();
   if (props.getProperty('PERFORMOS_SEEDED') === '3') return false;

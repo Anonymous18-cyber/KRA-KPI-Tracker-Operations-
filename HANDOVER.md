@@ -1984,3 +1984,64 @@ a `Sheet1` tab and a version history starting at 12:29 said "this file is new"
 far more clearly than any amount of reading the code did. When data is missing,
 identify *which* database is being read before reasoning about what happened to
 its contents.
+
+## 20.1 THE BACKEND ID — write this down
+
+```
+1IxJPhwKnNIS_WxstqgwflRjfPBsuwm3LQVyvRUXDAzE
+```
+
+`PerformOS — Backend`. As of 29 Sep 2026 it holds **38 employees, 209
+assignments, 1,248 targets, 371 performance rows, 6 periods**.
+
+This is recorded HERE, in a file under version control, because on 29 Sep the
+only record of which spreadsheet was the database lived in a single script
+property — and when that property went wrong there was nothing to check it
+against. Four different wrong ids went into it that afternoon before the right
+one was found, and finding it took an hour.
+
+**Drive holds four other spreadsheets with almost the same name.** Two are
+empty `Performance Tracker — Backend` files the app minted for itself; one
+`PerformOS — Backend` from 9 Sep has the framework but **zero** performance
+rows. Picking by name or by date gets it wrong. Pick by row count.
+
+## 20.2 IF THE DASHBOARD IS EMPTY — the runbook
+
+Do these in order and stop as soon as it works.
+
+| | |
+|---|---|
+| 1 | `useKnownBackend()` — sets the property to the id above, clears the cached handle, reopens the file and prints every tab's row count. No searching, no pasting. |
+| 2 | `whoAmI()` — confirms the resolved backend and that you can view. |
+| 3 | Reload the dashboard. |
+
+**Do not set `PERFORMOS_DB_ID` by hand.** A Google file id is 44 characters of
+noise copied out of a URL among a dozen open tabs; it was set by hand three
+times on 29 Sep and was wrong every time, twice to ids that were not files at
+all. `useKnownBackend()` exists so nobody has to type it.
+
+If the backend genuinely moves, change `KNOWN_BACKEND_ID_` in Code.gs and
+commit it — then the id is in version control rather than in somebody's memory.
+
+**If `useKnownBackend()` says CANNOT OPEN IT**, the pointer is right and the
+file is not reachable. That is an access problem with that specific file, and
+the message carries Drive's own error. Nothing else in this runbook will help.
+
+**If the framework is genuinely gone**, it rebuilds from source:
+`refreshFrameworkFromSource()` → `importTargets()` → `importDsoAchievements()`
+→ `importSellerTat()` → `importOmpTransit()` → `importOmpDispatch()` →
+`importOmpTracking()`. Everything except hand-entered levels comes back.
+
+## 20.3 What is still not explained
+
+Four unrecognised ids reached `PERFORMOS_DB_ID` on 29 Sep. Two of them —
+`1NX70cTB…`, `1J9yf36o…` — resolve to no file this account can open, and
+`SpreadsheetApp.create()` would have left a real file behind, so they did not
+come from the app. The most likely account is the manual repointing that was
+going on at the time. **It is written down as unexplained rather than closed**,
+because the alternative reading is that something else can write that property,
+and only one line in the codebase can — which would mean that reading is wrong.
+
+The v67 guard means a recurrence now fails loudly with the id attached instead
+of silently minting a replacement, so the next occurrence will say more than
+this one did.
