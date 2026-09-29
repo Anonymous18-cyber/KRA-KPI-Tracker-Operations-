@@ -2061,3 +2061,73 @@ long as you let them, and they disagree silently.
 
 Fixed for real in **v69**.
 
+
+---
+
+# 21. TWO PEOPLE, ONE APPS SCRIPT PROJECT
+
+On 29 Sep 2026 two people worked on this project at the same time. One edited
+directly in the Apps Script editor; the other pushed from a clone. Each push
+silently destroyed the other's work. Nothing warned anybody, and an afternoon
+went into diagnosing faults that were really just the two of them overwriting
+each other.
+
+**Apps Script has no merge.** `clasp push` replaces the project with what is on
+your disk. The editor saves over whatever was there. Neither reports a conflict,
+because neither looks.
+
+## The three rules
+
+**1. Nobody edits in the Apps Script editor.**
+
+This is the one that matters. The editor is for RUNNING functions and reading
+execution logs — not for changing code. Anything typed there is invisible to
+git, invisible to the other person, and deleted without warning by the next
+`clasp push` from anyone. Code enters the project one way: pushed from the repo.
+
+**2. Push through `scripts/safe-push.js`, never `clasp push` directly.**
+
+```
+node scripts/safe-push.js --check     what is live, and has it moved?
+node scripts/safe-push.js             check, then push
+node scripts/safe-push.js --force     push anyway, having looked
+```
+
+It pulls the live project, compares it against a fingerprint of what this
+machine last pushed, and **refuses** if anything changed in between — printing
+where it put the live copy so it can be diffed. The fingerprint lives in
+`.last-push.json`, gitignored: it is a fact about a machine, not about the code.
+
+It cannot stop somebody editing in the editor. It can stop that edit being
+destroyed silently, which is the next best thing.
+
+**3. One person deploys.**
+
+Agreed 29 Sep: **Vishwash works and pushes; Srinivas deploys.** `clasp push`
+only moves `/dev`. Production stays on its pinned version until
+`clasp deploy`, so the person deploying is the one who decides what is live.
+
+## What makes this safe rather than merely agreed
+
+**The backend is shared with every admin.** `shareBackendWithAdmins()` grants
+edit access to everyone in `PERFORMOS_ADMINS`. Before that, a run under the
+other account could not open the database — and before the v67 guard, each such
+run created a replacement in its own Drive and repointed everyone at it. See
+§20.
+
+**`ss_()` refuses to invent a backend.** However many people run the app, none
+of them can silently move it to a different database.
+
+**The repo is the record.** The Apps Script project is a deployment target, not
+a source of truth. If the project and the repo disagree, the repo is right and
+the project needs pushing.
+
+## If you want to work without coordinating at all
+
+Give the second person their **own Apps Script project and their own copy of
+the backend**. They can break anything, deploy anything, and reseed at will;
+nothing they do reaches production. Changes come back as a pull request, get
+merged, and reach the real project through one safe-push and one deploy.
+
+That is more setup than an agreement, and it is the only arrangement that does
+not rely on both people remembering who has the pen.

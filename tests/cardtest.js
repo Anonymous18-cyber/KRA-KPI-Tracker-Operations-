@@ -103,6 +103,11 @@ function stats(list) {
 }
 
 /* --- the real code under test -------------------------------------------- */
+/* targetOf decides which target a row shows — the one somebody set, or the
+   ladder rung that stands in for it on a rate KPI. targetedRows and rowSlice
+   both call it, so it has to come in first. */
+eval(grab('function targetOf(r){', 'function verticalTable(tid,rs,month){'));
+eval(grab('function targetCell(r){', 'function mayActual(id){'));
 eval(grab('function targetedRows(){', '/* One table per VERTICAL'));
 eval(grab('function ovStats(){', '/* Every filtered row that HAS a numeric target'));
 eval(grab('function sumLine(txt){', 'function cardDetail(key){'));
@@ -377,6 +382,41 @@ ck('  and the row note is the fallback',
    workingOf(multi, 'per_2026-09').indexOf('August') >= 0, true);
 ck('a note is escaped, not injected',
    workingOf({ actual_note: '<script>x</script>' }).indexOf('&lt;script&gt;') >= 0, true);
+
+console.log('\n--- the target a rate KPI shows ---');
+/* An OMP KPI has no PLAN row and wants none — nothing to divide by. But the
+   dashboard exists to answer target vs achievement, and a dash on every row
+   says the app does not know what good looks like. It does: RATING_ON_TARGET
+   is 4, so on a 0.8|0.85|0.9|0.95|1 ladder the target is 0.95. */
+var rateRow = { plan_target: null, ladder_target: 0.95, plan_unit: 'ratio',
+                actual: 0.906, plan_rule: '' };
+var setRow  = { plan_target: 6, ladder_target: null, plan_unit: 'count',
+                actual: 5, plan_rule: 'tab Plastics row 6' };
+var noneRow = { plan_target: null, ladder_target: null, plan_unit: '', actual: null };
+
+ck('a row with a real target uses it', targetOf(setRow).v, 6);
+ck('  and is not marked derived',      targetOf(setRow).derived, false);
+ck('a rate row falls back to the ladder rung', targetOf(rateRow).v, 0.95);
+ck('  and IS marked derived',                  targetOf(rateRow).derived, true);
+ck('a row with neither still shows nothing',   String(targetOf(noneRow).v), 'null');
+/* A real target of 0 is a target. It must not fall through to the ladder. */
+ck('a target of zero is a target, not an absence',
+   targetOf({ plan_target: 0, ladder_target: 0.95 }).v, 0);
+ck('  and is not called derived', targetOf({ plan_target: 0, ladder_target: 0.95 }).derived, false);
+
+console.log('\n--- and it is visibly not the same kind of number ---');
+var cellRate = targetCell(rateRow), cellSet = targetCell(setRow);
+ck('the rate target renders as a percentage', cellRate.indexOf('95%') >= 0, true);
+ck('  carrying the derived class',            /class="derived"/.test(cellRate), true);
+ck('  and says where it came from',           /from the ladder/.test(cellRate), true);
+ck('  with the reason on hover',
+   /Target 4 of its own ladder/.test(cellRate), true);
+/* A number somebody committed to must NOT pick up the derived marking. */
+ck('a real target is not marked derived',     /class="derived"/.test(cellSet), false);
+ck('  nor labelled from the ladder',          /from the ladder/.test(cellSet), false);
+ck('  and keeps its own rule as the hover',   /tab Plastics row 6/.test(cellSet), true);
+ck('a row with no target at all still shows a dash',
+   targetCell(noneRow).indexOf('lv-na') >= 0, true);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

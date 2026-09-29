@@ -1,4 +1,4 @@
-.git/**
-Code.js
-**/*.md
-tests/**
+**/**
+!Code.gs
+!Index.html
+!appsscript.json

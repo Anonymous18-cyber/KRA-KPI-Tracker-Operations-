@@ -422,8 +422,14 @@ ck('  rendered above Targets and achieved',
    Neelesh's 20 days plus Rishi's 10 against a target of 5 + 5. The values are
    collected and reduced by agg_kind now — totalled for a quantity, averaged
    for a rate or a duration. Rendering is checked in cardtest. */
+/* The value now comes through targetOf(), which falls back to the ladder rung
+   for a rate KPI that has no target of its own — so the literal moved. What
+   this asserts is unchanged: the targets are COLLECTED per POC and reduced by
+   agg_kind, not summed on sight. */
 ck('  a KRA row collects its POC values rather than adding them blind',
-   page.indexOf('k.ts.push(Number(r.plan_target))') >= 0, true);
+   /k\.ts\.push\(Number\(_tt\.v\)\)/.test(page), true);
+ck('    taking the target a row actually shows, ladder rung included',
+   /var _tt=targetOf\(r\);/.test(page), true);
 ck('    and reduces by the aggregation kind',
    /function meansAcrossPocs\(k\)\{/.test(page), true);
 ck('    the blind sum is gone',
@@ -766,6 +772,47 @@ ck('  and the basis is stated on the table', page.indexOf('the same basis the DS
    with the drawing it constrains. Do not re-add it here; one owner per fact,
    or the two copies drift and the weaker one gets believed. */
 
+console.log('\n--- leads sit at the top of their vertical ---');
+/* Alphabetical put whoever was called Aishwarya above the manager of the team,
+   which is not how anybody reads an org chart. */
+eval(grab('var GRADES=[', 'function verticalTable(tid,rs,month){'));
+function who(name, desig, status) {
+  return { name: name, designation: desig, status: status || '' };
+}
+var team = [
+  who('AISHWARYA KARANAM', 'Executive'),
+  who('ASHWIN KUMAR SINGH', 'Manager - Onboarding', 'lead'),
+  who('BHARATH KUMAR', 'Senior Executive - Business Development'),
+  who('ARVIND JAKKULA', 'Executive'),
+  who('NAVEEN RANGA', 'Assistant Manager - Business Development')
+].sort(bySeniority).map(function (e) { return e.name.split(' ')[0]; });
+ck('the lead is first', team[0], 'ASHWIN');
+ck('  then the assistant manager', team[1], 'NAVEEN');
+ck('  then the senior executive', team[2], 'BHARATH');
+ck('  then executives, alphabetically', team[3] + ' ' + team[4], 'AISHWARYA ARVIND');
+
+/* THE LEAD MARKER IS NOT RE-DERIVED HERE. assignLeads_ already stamps it. */
+ck('a lead outranks a more senior grade who is not the lead',
+   [who('A', 'Executive', 'lead'), who('B', 'General Manager')]
+     .sort(bySeniority)[0].name, 'A');
+/* Assistant Manager must not be read as Manager — the word is inside it. */
+ck('"Assistant Manager" is not ranked as "Manager"',
+   [who('AM', 'Assistant Manager - Collections'), who('M', 'Manager - Collections')]
+     .sort(bySeniority)[0].name, 'M');
+ck('  and General Manager still outranks both',
+   [who('AM', 'Assistant Manager'), who('GM', 'General Manager'), who('M', 'Manager')]
+     .sort(bySeniority)[0].name, 'GM');
+ck('a blank designation sorts last, not first',
+   [who('Z', ''), who('A', 'Executive')].sort(bySeniority)[0].name, 'A');
+ck('  and two blanks fall back to the name',
+   [who('Z', ''), who('A', '')].sort(bySeniority)[0].name, 'A');
+
+ck('the People table sorts each department band',
+   /group=group\.slice\(\)\.sort\(bySeniority\)/.test(page), true);
+ck('  on a copy, so the caller\'s array is not reordered underneath it',
+   /group\.slice\(\)\.sort/.test(page), true);
+ck('the vertical scorecard sorts the same way',
+   /people\.sort\(bySeniority\)/.test(page), true);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
-

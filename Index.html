@@ -389,6 +389,9 @@ button.worklink:focus-visible{outline:2px solid var(--accent);outline-offset:2px
 .mini tfoot tr.vtr td{border-top:1px solid var(--line);background:var(--sunken);
   font-weight:700}
 @media(max-width:700px){.sbs{grid-template-columns:1fr}}
+/* A TARGET NOBODY SET. Dotted underline, so a derived figure is visibly not
+   the same kind of thing as one somebody committed to in the Target Sheet. */
+.derived{border-bottom:1px dotted var(--ink-3);cursor:help}
 .dot{display:inline-block;width:9px;height:9px;border-radius:99px;
   margin-right:7px;flex:none}
 .tile .l{display:flex;align-items:center}
@@ -941,7 +944,7 @@ function ovStats(){
    percentage of — and saying so is more useful than showing a blank row. */
 function targetedRows(){
   return filteredRows().filter(function(r){
-    return r.plan_target!==null&&r.plan_target!==undefined; });
+    return targetOf(r).v!==null; });
 }
 /* Achieved as a share of target. The server computes r.ratio only for a RATIO
    ladder; an absolute one (DSO days, PDD crore) is scored on the raw number,
@@ -983,12 +986,71 @@ function achievedPct(c){
 /* One row's target and achieved for the month being shown.
  * '' means the whole span, which is what the row already carries. */
 function rowSlice(r,month){
-  if(!month) return {t:r.plan_target,a:r.actual};
+  if(!month) return {t:targetOf(r).v,a:r.actual};
   var m=(r.monthly||{})[month];
   /* a month absent from the breakdown had neither a target nor an achievement,
      which is different from the row having none at all */
   return m?{t:m.target,a:m.actual}:{t:null,a:null};
 }
+/* WHO COMES FIRST IN A VERTICAL.
+ *
+ * Alphabetical put whoever happened to be called Aishwarya above the manager of
+ * the team, which is not how anybody reads an org. Leads first, then by
+ * seniority, then alphabetically inside a grade.
+ *
+ * THE LEAD IS NOT GUESSED HERE. assignLeads_() in Code.gs already works it out
+ * from designations and stamps status='lead' on the person and lead_id on the
+ * team — the same marker the People table already prints a "Lead" tag from. A
+ * second opinion about who leads a team is one more thing that can disagree.
+ *
+ * The grades below are the vocabulary the workbook actually uses, which is why
+ * the list looks oddly specific. Order is most senior first; edit this array
+ * and every view that groups people follows. */
+var GRADES=[
+  /general\s*manager/i,        /* 0 */
+  /senior\s*manager/i,         /* 1 */
+  /assistant\s*manager/i,      /* 3 — checked BEFORE plain manager, or */
+  /\bmanager\b/i,              /* 2   "Assistant Manager" matches manager */
+  /team\s*lead/i,
+  /senior\s*executive/i,
+  /\bexecutive\b/i,
+  /management\s*trainee/i
+];
+/* assistant is tested before manager above, so put them back in rank order */
+var GRADE_ORDER=[0,1,3,2,4,5,6,7];
+function grade(e){
+  var d=String((e||{}).designation||'');
+  for(var i=0;i<GRADES.length;i++){
+    if(GRADES[i].test(d)) return GRADE_ORDER[i];
+  }
+  return 99;                                   /* unknown or blank: last */
+}
+function bySeniority(a,b){
+  var la=((a||{}).status==='lead')?0:1, lb=((b||{}).status==='lead')?0:1;
+  if(la!==lb) return la-lb;
+  var ga=grade(a), gb=grade(b);
+  if(ga!==gb) return ga-gb;
+  return String((a||{}).name||'').localeCompare(String((b||{}).name||''));
+}
+
+/* THE TARGET TO SHOW, and whether anybody set it.
+ *
+ * plan_target is a number somebody typed in the Target Sheet. A rate KPI
+ * has none and wants none — but the dashboard exists to answer target vs
+ * achievement, and a dash on every OMP row says the app does not know what
+ * good looks like. It does: the Target-4 rung of the KPI own ladder.
+ *
+ * The derived one is MARKED. It renders dotted and titled, so a number
+ * nobody set never sits unlabelled in the same column as one somebody did. */
+function targetOf(r){
+  if(r.plan_target!==null&&r.plan_target!==undefined)
+    return {v:r.plan_target,derived:false};
+  if(r.ladder_target!==null&&r.ladder_target!==undefined)
+    return {v:r.ladder_target,derived:true};
+  return {v:null,derived:false};
+}
+var RATING_ON_TARGET=4;
+
 function verticalTable(tid,rs,month){
   var kraIds=[], seenK={}, cell={}, seenP={}, people=[];
   rs.forEach(function(r){
@@ -1007,7 +1069,7 @@ function verticalTable(tid,rs,month){
   });
   kraIds.sort(function(a,b){
     return String((M.kras[a]||{}).name||'').localeCompare(String((M.kras[b]||{}).name||'')); });
-  people.sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
+  people.sort(bySeniority);
 
   var head='<table class="pv"><thead><tr><th rowspan="2" class="pvname">POC</th>'+
     kraIds.map(function(kid){
@@ -1080,7 +1142,8 @@ function verticalSummary(){
        already decided. Quantities total; durations and rates average. */
     var k=byV[v].kra[r.kra_id]||(byV[v].kra[r.kra_id]=
       {ts:[],as:[],unit:'',dir:'',agg:'',pagg:''});
-    if(r.plan_target!==null&&r.plan_target!==undefined) k.ts.push(Number(r.plan_target));
+    var _tt=targetOf(r);
+    if(_tt.v!==null) k.ts.push(Number(_tt.v));
     if(r.actual!==null&&r.actual!==undefined) k.as.push(Number(r.actual));
     k.unit=r.plan_unit||k.unit;
     k.dir=r.direction||k.dir;
@@ -1259,8 +1322,15 @@ function achievedCell(r,month){
     ' · '+h(mo)+'</div>'+work;
 }
 function targetCell(r){
-  if(r.plan_target===null||r.plan_target===undefined) return '<span class="lv-na">\u2014</span>';
-  var why=r.plan_rule||'';
+  var t=targetOf(r);
+  if(t.v===null) return '<span class="lv-na">\u2014</span>';
+  /* A DERIVED TARGET SAYS SO. Nothing typed it \u2014 it is the rung that counts as
+     on target on this KPI's own ladder. Left unmarked it would sit in the same
+     column as a figure somebody actually committed to. */
+  var why=t.derived
+    ?'No target is set for this KPI, so the target shown is Target '+
+     RATING_ON_TARGET+' of its own ladder \u2014 the rung that counts as on target.'
+    :(r.plan_rule||'');
   /* a YTD figure built from fewer months than the span is not a full-year
      target, and silently showing it as one would overstate the ask */
   var part=(r.months_total&&r.plan_months&&r.plan_months<r.months_total)
@@ -1268,8 +1338,9 @@ function targetCell(r){
       r.months_total+' mo</div>' : '';
   var drv=r.plan_source==='derived'
     ? '<div style="font-size:11px;color:var(--ink-3)">auto</div>' : '';
-  return '<span'+(why?' title="'+h(why)+'"':'')+'>'+
-    h(fmtTarget(r.plan_target,r.plan_unit))+'</span>'+part+drv;
+  return '<span'+(why?' title="'+h(why)+'"':'')+(t.derived?' class="derived"':'')+'>'+
+    h(fmtTarget(t.v,r.plan_unit))+'</span>'+part+
+    (t.derived?'<div style="font-size:11px;color:var(--ink-3)">from the ladder</div>':drv);
 }
 function mayActual(id){ return editable()&&(can('enter_actual')||(can('enter_own')&&
   String((S.session||{}).employee_id)===String(id)))&&inScope(id); }
@@ -1934,6 +2005,8 @@ function peopleTable(list){
   });
   order.forEach(function(tid){
     var group=byDept[tid]; if(!group||!group.length) return;
+    /* lead first, then seniority, then name — see bySeniority */
+    group=group.slice().sort(bySeniority);
     var t=M.teams[tid];
     /* KPIs, not assignment rows: six Metal POCs holding the same seven KPIs is
        seven, not forty-two. */
@@ -2570,8 +2643,7 @@ function modalWorking(empId,kpiId,month){
     'What it was rated against</b></div>'+
     '<div class="calc">'+lad+
     '<div class="cl"><span>Target set</span><b>'+
-    (r.plan_target===null||r.plan_target===undefined?'—'
-      :h(fmtTarget(r.plan_target,r.plan_unit)))+'</b></div>'+
+    targetCell(r)+'</b></div>'+
     '<div class="cl"><span>Rating earned</span><b>'+
     (r.level===null||r.level===undefined||r.level===''?'—':'Target '+f1(r.level))+
     '</b></div></div>'+
@@ -2675,8 +2747,7 @@ function kpiTable(rows,showPct){
       var p=pctOfTarget(r);
       return '<tr><td>'+h((M.emps[r.employee_id]||{}).name||'—')+'</td>'+
         '<td>'+h(r.kpi)+'</td>'+
-        '<td class="r num">'+(r.plan_target===null||r.plan_target===undefined
-          ?'<span class="lv-na">—</span>':h(fmtTarget(r.plan_target,r.plan_unit)))+'</td>'+
+        '<td class="r num">'+targetCell(r)+'</td>'+
         '<td class="r num">'+(r.actual===null||r.actual===undefined
           ?'<span class="lv-na">—</span>':h(fmtTarget(r.actual,r.plan_unit)))+'</td>'+
         (showPct?'<td class="r num">'+(p===null?'<span class="lv-na">—</span>':pc(p))+'</td>':'')+
@@ -2847,7 +2918,7 @@ function cardDetail(key){
                  var p=pctOfTarget(r);
                  return '<tr><td>'+h((M.emps[r.employee_id]||{}).name||'—')+'</td>'+
                    '<td>'+h(r.kpi)+'</td>'+
-                   '<td class="r num">'+h(fmtTarget(r.plan_target,r.plan_unit))+'</td>'+
+                   '<td class="r num">'+targetCell(r)+'</td>'+
                    '<td class="r num">'+(r.actual===null||r.actual===undefined
                      ?'<span class="lv-na">—</span>'
                      :h(fmtTarget(r.actual,r.plan_unit)))+'</td>'+
@@ -2878,7 +2949,7 @@ function cardDetail(key){
                  miss.map(function(r){
                    return '<tr><td>'+h((M.emps[r.employee_id]||{}).name||'—')+'</td>'+
                      '<td>'+h(r.kpi)+'</td>'+
-                     '<td class="r num">'+h(fmtTarget(r.plan_target,r.plan_unit))+
+                     '<td class="r num">'+targetCell(r)+
                      '</td></tr>';
                  }))
               :'<div class="cap" style="padding:12px 13px">every targeted KPI has '+

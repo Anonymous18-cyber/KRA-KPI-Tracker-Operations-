@@ -1296,9 +1296,36 @@ function aggKind_(unit, kpiName, parsed, hasTarget) {
      * apiBootstrap down with it and emptied the whole dashboard on both /dev
      * and /exec — not just the rate rows. aggKind_ two lines up guards for
      * exactly this and that guard should have been copied with the idea. */
-    if (!planEver[String(a.employee_id) + '|' + String(a.kpi_id)] &&
-        parsed && parsed.kind === 'numeric' && isRatioLadder_(parsed.values).ok) {
-      planUnit = 'ratio';
+    var isRate = !planEver[String(a.employee_id) + '|' + String(a.kpi_id)] &&
+                 parsed && parsed.kind === 'numeric' && isRatioLadder_(parsed.values).ok;
+    if (isRate) planUnit = 'ratio';
+    /* THE TARGET FOR A RATE KPI IS ITS OWN LADDER'S TARGET-4 RUNG.
+     *
+     * These KPIs have no PLAN row — there is nothing to divide by and none is
+     * wanted. But "target vs achievement" is the question the dashboard is for,
+     * and answering it with a dash on every OMP row says the app does not know
+     * what good looks like. It does: RATING_ON_TARGET_ is 4, so on a
+     * 0.8|0.85|0.9|0.95|1 ladder the target is 0.95, and 90.6% achieved is 95%
+     * of it.
+     *
+     * DERIVED, AND SAID TO BE. plan_source is set to 'ladder' rather than left
+     * as the Target Sheet's, because a number nobody typed must not sit in the
+     * same column as one somebody did without saying which it is.
+     *
+     * IT IS NOT plan_target, AND MUST NOT BE. plan_target means a number
+     * somebody set in the Target Sheet. Putting a derived rung in the same
+     * field would print "Target 1.1" against a count KPI as though a human had
+     * typed it — which is the inventing-a-number failure the plantest
+     * assertions exist to catch, and they caught exactly that when this was
+     * first written the lazy way.
+     *
+     * Display only. Scoring still reads the per-month PLAN value, which stays
+     * null — set this into monthTarget instead and every rate would be divided
+     * by 0.95 and come out 5% too high. */
+    var ladderTarget = null;
+    if (isRate) {
+      var rung = parsed.values[RATING_ON_TARGET_ - 1];
+      if (rung !== null && rung !== undefined && isFinite(rung)) ladderTarget = rung;
     }
     var row = {
       employee_id: a.employee_id, kra_id: a.kra_id, kpi_id: a.kpi_id,
@@ -1319,6 +1346,10 @@ function aggKind_(unit, kpiName, parsed, hasTarget) {
       /* 'sum' or 'mean' — the same rule the achievement used, so the two sides
          of the row are always comparable */
       plan_agg: agg,
+      /* The ladder rung that counts as on target, for a KPI that has no
+         target of its own. Kept APART from plan_target so a derived number
+         is never mistaken for one somebody set. */
+      ladder_target: ladderTarget,
       plan_unit: planUnit,
       plan_source: planSrc,
       plan_rule: planRule,
@@ -8785,6 +8816,78 @@ function useKnownBackend() {
     out.push('');
     out.push('The property is set correctly and the file still will not open,');
     out.push('so the fault is access to that file, not the pointer.');
+  }
+  var txt = out.join(nl);
+  Logger.log(txt);
+  return txt;
+}
+
+/* ==========================================================================
+ * SHARE THE BACKEND WITH EVERYONE WHO ADMINISTERS THE APP
+ *
+ * Two people worked on this project on 29 Sep 2026 and only one of them owned
+ * the backend spreadsheet. Every run under the other account could not open it
+ * — and before the v67 guard, each of those runs CREATED a replacement in that
+ * account's own Drive and repointed PERFORMOS_DB_ID at it. The other person
+ * then could not open THAT one either. Four unreadable ids and a day of it.
+ *
+ * The fix is not clever: one database, and everyone who runs the app can open
+ * it. This grants edit access to every address in PERFORMOS_ADMINS, which is
+ * the list that already decides who may administer the thing — so the answer
+ * to "who should be able to open the database" is not maintained twice.
+ *
+ * Idempotent: adding an editor who is already one is a no-op, and it reports
+ * who was added rather than claiming to have done something.
+ * ======================================================================== */
+function shareBackendWithAdmins() {
+  var nl = String.fromCharCode(10), out = [];
+  var id = PropertiesService.getScriptProperties().getProperty(PROP_DB);
+  if (!id) { var no = 'PERFORMOS_DB_ID is not set. Run useKnownBackend() first.';
+             Logger.log(no); return no; }
+
+  var file;
+  try { file = DriveApp.getFileById(id); }
+  catch (e) {
+    var bad = 'Cannot open the backend ' + id + ' — ' + (e && e.message || e) + nl +
+      'Run useKnownBackend(), then this.';
+    Logger.log(bad); return bad;
+  }
+  out.push('backend : ' + file.getName());
+  out.push('          ' + id);
+  out.push('owner   : ' + (function () {
+    try { return file.getOwner().getEmail(); } catch (e) { return '(unknown)'; }
+  })());
+  out.push('');
+
+  var admins = bootstrapAdmins_();
+  if (!admins.length) {
+    out.push('PERFORMOS_ADMINS is empty, so there is nobody to share it with.');
+    var none = out.join(nl); Logger.log(none); return none;
+  }
+
+  var already = {};
+  try {
+    file.getEditors().forEach(function (u) { already[email_(u.getEmail())] = true; });
+    already[email_(file.getOwner().getEmail())] = true;
+  } catch (e) { /* listing can fail on a shared drive; addEditor is still safe */ }
+
+  var added = [], kept = [], failed = [];
+  admins.forEach(function (a) {
+    if (already[a]) { kept.push(a); return; }
+    try { file.addEditor(a); added.push(a); }
+    catch (e) { failed.push(a + '  (' + (e && e.message || e) + ')'); }
+  });
+
+  out.push('=== EDIT ACCESS ===');
+  added.forEach(function (a) { out.push('  ADDED   ' + a); });
+  kept.forEach(function (a) { out.push('  already ' + a); });
+  failed.forEach(function (a) { out.push('  FAILED  ' + a); });
+  out.push('');
+  if (failed.length) {
+    out.push(failed.length + ' could not be added. Share it by hand from Drive.');
+  } else {
+    out.push('Every admin can now open the backend, so no run of theirs will be');
+    out.push('refused — and with the v67 guard none of them can mint a rival one.');
   }
   var txt = out.join(nl);
   Logger.log(txt);
