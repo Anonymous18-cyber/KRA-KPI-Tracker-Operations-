@@ -1820,6 +1820,47 @@ Note also `Payment Status` has only **54 Full Paid** across five months, and
 `Within-Terms` — which sounds like the on-time value — has **3 rows**. Whatever
 Timely Payment Release ends up measuring, it will not be that column alone.
 
+
+## 18.12 Dispatch Documentation Accuracy — BUILT 30 Sep 2026
+
+`previewOmpDocs()` → dry run. `importOmpDocs()` → the write, not on
+`DIAG_FUNCTIONS_`. Held by **Divya Boppuri** and **Jithender Chitakodur**.
+
+Ruled 30 Sep 2026: **all three documents must be Yes** — `Vehicle Images` (AC),
+`Weighments` (AD), `Invoice / EWB` (AE).
+
+| | |
+|---|---|
+| hit | every required document Yes |
+| miss | any `No`, or any **blank** — a document that should exist and was not recorded |
+| leaves the denominator | all three `NA`, cancelled, never In-Transit, current month |
+| not scored | any value that is not Yes / No / NA — reported by column and word |
+
+**`NA` is ignored rather than counted against.** A document that was never
+required cannot be missing, so that column is dropped and the rest are judged.
+That is an interpretation of the ruling, not the ruling: one line to change.
+
+Denominator is shipments that reached In-Transit, on the **dispatch** month —
+these documents are produced at dispatch, and a shipment that never left has
+none to get wrong.
+
+### What the first run found
+
+**121 of 121 countable shipments were `Yes | Yes | Yes`.** No `No`, no `NA`, no
+blanks reached the calculation — every exception in those columns belongs to a
+POC who does not hold this KPI. All seven person-months therefore score 100%,
+Target 5.
+
+The zero variance was put to the KRA owner before anything was written, along
+with the observation that the KPI carries 35% of Divya's scorecard. **Ruled
+30 Sep 2026: import it, the score is honest** — the documentation genuinely is
+completed every time.
+
+Worth knowing when reading those ratings: across 121 shipments this measure has
+not yet distinguished anybody. That is a fact about the data rather than a fault
+in the rule, and it may change as soon as one shipment dispatches without a
+weighment.
+
 ## 18.12 Still open on OMP
 
 | | |

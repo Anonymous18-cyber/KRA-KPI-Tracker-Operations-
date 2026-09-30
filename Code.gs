@@ -516,7 +516,8 @@ var DIAG_FUNCTIONS_ = {
   previewOmpDispatch: previewOmpDispatch,
   profileOmpCategoricals: profileOmpCategoricals,
   findBackends: findBackends,
-  previewOmpTracking: previewOmpTracking
+  previewOmpTracking: previewOmpTracking,
+  previewOmpDocs: previewOmpDocs
 };
 
 function diagText_(body) {
@@ -5531,7 +5532,14 @@ var OMP_WANT_ = {
      are matched on the qualified label only. */
   tracking:  /^(vehcile status\s*\/\s*)?tracking$/i,
   qc:        /^delivered\s*\/\s*qc$/i,
-  dn:        /^delivered\s*\/\s*dn$/i
+  dn:        /^delivered\s*\/\s*dn$/i,
+  /* The three dispatch documents. Matched on the PLAIN header: each is unique,
+     and "Invoice / EWB" already contains a slash, which the banner-qualified
+     form ("DISPATCH / Invoice / EWB") would make ambiguous to read and to
+     write. */
+  vehImages:  /^vehicle images$/i,
+  weighment:  /^weighments?$/i,
+  invoiceEwb: /^invoice\s*\/\s*ewb$/i
 };
 
 function ompTrackerGrid_() {
@@ -5799,7 +5807,10 @@ function profileOmpCategoricals() {
     { key: 'dnStatus',  kpi: 'CN & DN Closure Rate' },
     { key: 'dn',        kpi: 'CN & DN Closure Rate' },
     { key: 'qc',        kpi: 'QC & Settlement Accuracy Rate' },
-    { key: 'payStatus', kpi: 'Timely Payment Release Rate' }
+    { key: 'payStatus', kpi: 'Timely Payment Release Rate' },
+    { key: 'vehImages', kpi: 'Dispatch Documentation Accuracy' },
+    { key: 'weighment', kpi: 'Dispatch Documentation Accuracy' },
+    { key: 'invoiceEwb', kpi: 'Dispatch Documentation Accuracy' }
   ];
 
   var scored = 0, cancelled = 0, noPoc = 0, noId = 0;
@@ -6146,6 +6157,286 @@ function ompTrackingAchievements_(dryRun) {
 function previewOmpTracking() { return ompTrackingAchievements_(true); }
 /** THE REAL WRITE. Run previewOmpTracking() first. */
 function importOmpTracking() { return ompTrackingAchievements_(false); }
+
+/* ==========================================================================
+ * DISPATCH DOCUMENTATION ACCURACY
+ *
+ * Ruled 30 Sep 2026: **all three documents must be Yes** — vehicle images, the
+ * weighment, and the invoice/e-way bill.
+ *
+ * WHAT "NA" DOES, and it is an interpretation rather than the ruling. The
+ * columns hold NA as well as Yes and No, and NA means the document did not
+ * apply to that shipment. A document that was never required cannot be missing,
+ * so an NA column is IGNORED and the shipment is judged on the rest. If all
+ * three are NA there is nothing to judge and the shipment leaves the
+ * denominator entirely. One line to change if the intent was that NA counts
+ * against.
+ *
+ * ANYTHING NOT Yes / No / NA IS NOT SCORED. describeOmpTracker reported 3, 4
+ * and 2 distinct values in these columns and only three of those were ever
+ * seen — the Tracking column hid "SIM track" exactly this way, and scoring an
+ * unknown word as a pass would be the silent lie this project keeps guarding
+ * against. Unrecognised values are counted, named, and left out.
+ *
+ * DENOMINATOR: shipments that reached In-Transit, on the DISPATCH month. These
+ * documents are produced at dispatch; a shipment that never left has none to
+ * get wrong.
+ * ======================================================================== */
+var OMP_DOCS_NOTE_ = 'OMP docs';
+var OMP_DOCS_KRA_ = /dispatch documentation/i;
+var OMP_DOCS_KPI_ = /dispatch documentation accuracy/i;
+var OMP_DOC_COLS_ = ['vehImages', 'weighment', 'invoiceEwb'];
+var OMP_DOC_LABEL_ = { vehImages: 'vehicle images', weighment: 'weighment',
+                       invoiceEwb: 'invoice/EWB' };
+var OMP_DOC_YES_ = /^\s*(yes|y|done|uploaded|available)\s*$/i;
+var OMP_DOC_NO_  = /^\s*(no|n|not\s*done|missing|pending)\s*$/i;
+var OMP_DOC_NA_  = /^\s*(n\.?\s*a\.?|not\s*applicable|not\s*required)\s*$/i;
+
+/* One shipment. `vals` is the three raw cell values, in OMP_DOC_COLS_ order. */
+function ompDocsOne_(mmRow, vals, monthId, today) {
+  if (!mmRow) return { out: 'skip', why: 'not in MM_CT' };
+  if (/^\s*CANCELLED\s*$/i.test(String(mmRow.status || '')) ||
+      /^\s*CANCELLED\s*$/i.test(String(mmRow.stage || ''))) {
+    return { out: 'skip', why: 'cancelled' };
+  }
+  if (!ompMonthClosed_(monthId, today)) {
+    return { out: 'skip', why: 'current month, not scored yet' };
+  }
+  if (mmRow.inTransit === null || mmRow.inTransit === undefined) {
+    return { out: 'skip', why: 'never reached In-Transit — no dispatch documents' };
+  }
+  var yes = 0, no = 0, na = 0, blank = 0, unknown = [];
+  for (var i = 0; i < vals.length; i++) {
+    var v = String(vals[i] == null ? '' : vals[i]).trim();
+    if (!v) { blank++; continue; }
+    if (OMP_DOC_NA_.test(v)) { na++; continue; }
+    if (OMP_DOC_YES_.test(v)) { yes++; continue; }
+    if (OMP_DOC_NO_.test(v)) { no++; continue; }
+    unknown.push(OMP_DOC_LABEL_[OMP_DOC_COLS_[i]] + '="' + v + '"');
+  }
+  if (unknown.length) {
+    return { out: 'unruled', why: unknown.join(', ') + ' — nobody has ruled on that' };
+  }
+  /* Every document not applicable: nothing to get right or wrong. */
+  if (na === vals.length) {
+    return { out: 'skip', why: 'all three marked NA — no documents were required' };
+  }
+  /* A blank is a document that should exist and was not recorded. That is a
+     miss, not an absence: treating it as one would let an unfilled row read as
+     a pass. */
+  if (blank) {
+    return { out: 'miss', why: blank + ' of 3 not recorded at all' };
+  }
+  if (no) {
+    return { out: 'miss', why: no + ' of ' + (yes + no) + ' required document(s) missing' };
+  }
+  return { out: 'hit', why: 'all ' + yes + ' required document(s) present' +
+    (na ? ' (' + na + ' not applicable)' : '') };
+}
+
+function ompDocsAchievements_(dryRun) {
+  ensureSeeded_();
+  var nl = String.fromCharCode(10), out = [];
+  var today = new Date();
+
+  var t = ompTrackerGrid_();
+  if (t.error) return t.error;
+  var need = ['poc', 'shipment'].concat(OMP_DOC_COLS_);
+  var gone = need.filter(function (k) { return t.col[k] === undefined; });
+  if (gone.length) return 'OMP_TRACKER is missing: ' + gone.join(', ');
+  out.push('columns read:');
+  need.forEach(function (k) { out.push('  ' + pad_(k, 12) + t.letters[k]); });
+  out.push('');
+  out.push('accurate = all three documents Yes.  NA is ignored (the document was');
+  out.push('not required).  A blank is a miss.  All three NA leaves the denominator.');
+  out.push('');
+
+  var mm = {};
+  try {
+    var msrc = SpreadsheetApp.openById(SHIPMENTS_SHEET_ID);
+    var msh = findSheet_(msrc, SHIPMENTS_TAB);
+    if (!msh) return 'no tab matching "' + SHIPMENTS_TAB + '" in MM_CT';
+    var mg = msh.getRange(1, 1, msh.getLastRow(), msh.getLastColumn()).getValues();
+    var mi = headerIndex_(mg[0]);
+    if (!('shipment_id' in mi)) return 'Raw_Shipments has no shipment_id column';
+    if (!('status_timeline' in mi)) return 'Raw_Shipments has no status_timeline column';
+    for (var r = 1; r < mg.length; r++) {
+      var id = String(mg[r][mi['shipment_id']] || '').trim().toUpperCase();
+      if (!id) continue;
+      var ms = parseTimeline_(mg[r][mi['status_timeline']])[OMP_INTRANSIT_STAGE_];
+      mm[id] = {
+        status: 'shipment_status' in mi ? mg[r][mi['shipment_status']] : '',
+        stage: 'shipment_stage_label' in mi ? mg[r][mi['shipment_stage_label']] : '',
+        inTransit: (ms === null || ms === undefined) ? null : Math.floor(ms / 86400000)
+      };
+    }
+  } catch (e) { return 'Cannot read MM_CT  (' + (e && e.message || e) + ')'; }
+
+  var emps = read_(T.EMPLOYEES).filter(function (e) { return !isLeaver_(e.name); });
+  var kras = idx_(read_(T.KRAS)), kpis = idx_(read_(T.KPIS));
+  var holds = {};
+  read_(T.ASSIGN).forEach(function (a) {
+    var kra = kras[a.kra_id], kpi = kpis[a.kpi_id];
+    if (!kra || !kpi) return;
+    if (!OMP_DOCS_KRA_.test(String(kra.name))) return;
+    if (!OMP_DOCS_KPI_.test(String(kpi.name))) return;
+    for (var i = 0; i < emps.length; i++) {
+      if (String(emps[i].id) === String(a.employee_id)) {
+        (holds[emps[i].id] = holds[emps[i].id] || []).push(a.kpi_id); return;
+      }
+    }
+  });
+  var names = Object.keys(holds).map(function (id) {
+    for (var i = 0; i < emps.length; i++) if (String(emps[i].id) === id) return emps[i].name;
+    return id;
+  }).sort();
+  out.push('holds this KPI: ' + (names.length ? names.join(', ') : 'NOBODY'));
+  if (!names.length) { Logger.log(out.join(nl)); return out.join(nl); }
+  out.push('');
+
+  var rows = t.grid.slice(t.headerRow + 1);
+  var acc = {}, whyCount = {}, combo = {}, unruled = 0, samples = [];
+  rows.forEach(function (row) {
+    var id = String(row[t.col.shipment] == null ? '' : row[t.col.shipment]).trim().toUpperCase();
+    if (!id) return;
+    var who = String(row[t.col.poc] == null ? '' : row[t.col.poc]).trim();
+    if (!who) return;
+    var res = ompResolveName_(who, emps);
+    if (res.state !== 'one' || !holds[res.emp.id]) return;
+    var e = res.emp, mmRow = mm[id];
+    if (!mmRow || mmRow.inTransit === null || mmRow.inTransit === undefined) {
+      whyCount['skip: never reached In-Transit'] =
+        (whyCount['skip: never reached In-Transit'] || 0) + 1;
+      return;
+    }
+    var monthId = Utilities.formatDate(new Date(mmRow.inTransit * 86400000), 'UTC', 'yyyy-MM');
+    var vals = OMP_DOC_COLS_.map(function (k) { return row[t.col[k]]; });
+    var v = ompDocsOne_(mmRow, vals, monthId, today);
+
+    /* EVERY COMBINATION OF THE THREE, against the verdict it got. The value
+       list was not fully known when this was written — describeOmpTracker
+       reported more distinct values than had ever been seen. */
+    if (v.out === 'hit' || v.out === 'miss' || v.out === 'unruled') {
+      var key = vals.map(function (x) {
+        var s2 = String(x == null ? '' : x).trim(); return s2 || '(blank)'; }).join(' | ') +
+        '  ->  ' + v.out;
+      combo[key] = (combo[key] || 0) + 1;
+    }
+    whyCount[v.out + ': ' + v.why.replace(/\d+/g, 'N')] =
+      (whyCount[v.out + ': ' + v.why.replace(/\d+/g, 'N')] || 0) + 1;
+    if (v.out === 'unruled') { unruled++; return; }
+    var k = e.id + '|' + monthId;
+    var b = acc[k] || (acc[k] = { emp: e, month: monthId, hit: 0, miss: 0, skip: 0 });
+    if (v.out === 'hit') b.hit++; else if (v.out === 'miss') b.miss++; else b.skip++;
+    if (v.out === 'miss' && samples.length < 10) {
+      samples.push(pad_(e.name, 22) + pad_(monthId, 9) + pad_(id, 14) + v.why);
+    }
+  });
+
+  out.push('=== EVERY COMBINATION, AND THE VERDICT IT RECEIVED ===');
+  out.push('vehicle images | weighment | invoice/EWB');
+  out.push('');
+  Object.keys(combo).sort().forEach(function (k) {
+    out.push('  ' + pad_(String(combo[k]), 6) + k);
+  });
+  if (unruled) {
+    out.push('');
+    out.push('  !! ' + unruled + ' row(s) hold a value nobody has ruled on and were');
+    out.push('     left out entirely — not scored either way.');
+  }
+  out.push('');
+  out.push('=== EVERY SHIPMENT, BY WHAT HAPPENED TO IT ===');
+  Object.keys(whyCount).sort(function (a, b) { return whyCount[b] - whyCount[a]; })
+    .forEach(function (k) { out.push('  ' + pad_(String(whyCount[k]), 6) + k); });
+  out.push('');
+
+  var perf = read_(T.PERF), perfById = {};
+  perf.forEach(function (p) { perfById[String(p.id)] = p; });
+  var ladder = {}, ladderAt = {}, pOrder = {};
+  read_(T.PERIODS).slice().sort(function (x, y) {
+    return (num_(x.sort) || 0) - (num_(y.sort) || 0); })
+    .forEach(function (p, ix) { pOrder[String(p.id)] = ix; });
+  read_(T.TARGETS).forEach(function (tg) {
+    var at = pOrder[String(tg.period_id)];
+    if (at === undefined) return;
+    var k2 = tg.employee_id + '|' + tg.kpi_id;
+    if (ladderAt[k2] !== undefined && ladderAt[k2] > at) return;
+    ladderAt[k2] = at; ladder[k2] = [tg.t1, tg.t2, tg.t3, tg.t4, tg.t5];
+  });
+
+  var writes = [], kept = [];
+  Object.keys(acc).sort().forEach(function (k) {
+    var b = acc[k], den = b.hit + b.miss;
+    if (!den) return;
+    var rate = Math.round(b.hit / den * 10000) / 10000;
+    (holds[b.emp.id] || []).forEach(function (kpiId) {
+      var pid = 'per_' + b.month;
+      var id2 = 'prf_' + b.emp.id + '_' + kpiId + '_' + pid;
+      var prev = perfById[id2];
+      if (prev && String(prev.note || '').indexOf(OMP_DOCS_NOTE_) < 0 &&
+          String(prev.actual || '') !== '') {
+        kept.push(pad_(b.emp.name, 22) + b.month + '   keeps ' + prev.actual);
+        return;
+      }
+      var lad = ladder[b.emp.id + '|' + kpiId];
+      var pb = lad ? parseBands_(lad) : null;
+      writes.push({ id: id2, emp: b.emp, kpiId: kpiId, pid: pid, month: b.month,
+        rate: rate, hit: b.hit, miss: b.miss, skip: b.skip, den: den,
+        level: pb ? levelFromBands_(pb, rate) : null,
+        was: prev ? prev.actual : '' });
+    });
+  });
+
+  out.push('=== THE RATE, PER PERSON PER MONTH ===');
+  out.push('  ' + pad_('person', 22) + pad_('month', 9) + pad_('complete', 10) +
+    pad_('short', 7) + pad_('of', 6) + pad_('rate', 8) + pad_('skipped', 9) +
+    pad_('rates', 6) + 'was');
+  writes.forEach(function (w) {
+    out.push('  ' + pad_(w.emp.name, 22) + pad_(w.month, 9) + pad_(String(w.hit), 10) +
+      pad_(String(w.miss), 7) + pad_(String(w.den), 6) +
+      pad_((Math.round(w.rate * 1000) / 10) + '%', 8) + pad_(String(w.skip), 9) +
+      pad_(w.level === null || w.level === undefined ? '?' : 'T' + w.level, 6) +
+      (w.was === '' ? '—' : String(w.was)) +
+      (w.den < 5 ? '   << ' + w.den + ' shipments' : ''));
+  });
+  if (kept.length) {
+    out.push('');
+    out.push('  left alone — a hand-typed number is never ours to overwrite:');
+    kept.forEach(function (l) { out.push('    ' + l); });
+  }
+  if (samples.length) {
+    out.push('');
+    out.push('=== A SAMPLE OF THE MISSES ===');
+    samples.forEach(function (l) { out.push('  ' + l); });
+  }
+
+  out.push('');
+  if (dryRun) {
+    out.push('NOTHING WAS WRITTEN. This is a dry run.');
+    out.push(writes.length + ' performance row(s) would be written.');
+    out.push('CHECK THE COMBINATION TABLE ABOVE before running importOmpDocs().');
+  } else {
+    var actor = currentEmail_() || 'system';
+    writes.forEach(function (w) {
+      upsert_(T.PERF, { id: w.id, employee_id: w.emp.id, kpi_id: w.kpiId,
+        period_id: w.pid, actual: w.rate, manual_level: '', level: '',
+        kind: '', direction: '',
+        note: OMP_DOCS_NOTE_ + ' · ' + w.hit + ' of ' + w.den +
+          ' had all required dispatch documents' +
+          (w.skip ? ' · ' + w.skip + ' not counted' : ''),
+        status: 'recorded', updated_by: actor, updated_at: nowIso_() });
+    });
+    out.push('WROTE ' + writes.length + ' performance row(s).');
+  }
+  var txt = out.join(nl);
+  Logger.log(txt);
+  return txt;
+}
+
+/** DRY RUN — writes nothing. */
+function previewOmpDocs() { return ompDocsAchievements_(true); }
+/** THE REAL WRITE. Run previewOmpDocs() first. */
+function importOmpDocs() { return ompDocsAchievements_(false); }
 
 /* ==========================================================================
  * TIMELY DISPATCH RATE
@@ -8641,7 +8932,7 @@ function findBackends() {
     var id = f.getId(), name = f.getName(), when = '';
     try { when = Utilities.formatDate(f.getLastUpdated(), Session.getScriptTimeZone(),
                                       'yyyy-MM-dd HH:mm'); } catch (e) { when = '?'; }
-    var emp = '-', asg = '-', prf = '-', note = '';
+    var emp = '-', asg = '-', prf = '-', note = '', notes = '';
     try {
       var ss = SpreadsheetApp.openById(id);
       function count(tab) {
@@ -8650,6 +8941,28 @@ function findBackends() {
         return Math.max(0, sh.getLastRow() - 1);
       }
       emp = count('EMPLOYEES'); asg = count('ASSIGNMENTS'); prf = count('PERFORMANCE');
+      /* WHERE DID EACH IMPORT LAND? Every importer stamps its own note, so
+         counting those says which backend actually received the rows. The
+         pointer moved five times on 29 Sep and a write follows the pointer,
+         not the intention — so "the import said it wrote 6 rows" and "the rows
+         are in the database you are looking at" are different claims. */
+      var psh2 = ss.getSheetByName('PERFORMANCE');
+      if (psh2 && psh2.getLastRow() > 1) {
+        var pg = psh2.getRange(1, 1, psh2.getLastRow(), psh2.getLastColumn()).getValues();
+        var pi = headerIndex_(pg[0]);
+        var nc = ('note' in pi) ? pi['note'] : -1;
+        if (nc >= 0) {
+          var tally = {};
+          for (var q = 1; q < pg.length; q++) {
+            var nt = String(pg[q][nc] || '');
+            var key = nt ? String(nt.split('·')[0]).trim() : '(no note)';
+            if (key.length > 22) key = key.slice(0, 22);
+            tally[key] = (tally[key] || 0) + 1;
+          }
+          notes = Object.keys(tally).sort().map(function (k2) {
+            return k2 + '=' + tally[k2]; }).join('   ');
+        }
+      }
       if (typeof emp === 'number' && (best === null || emp > best.emp)) {
         best = { id: id, name: name, emp: emp, asg: asg, prf: prf };
       }
@@ -8659,6 +8972,7 @@ function findBackends() {
     out.push('  ' + pad_(String(emp), 11) + pad_(String(asg), 9) + pad_(String(prf), 8) +
       pad_(when, 20) + name + (id === current ? '   <== CURRENT' : ''));
     out.push('  ' + pad_('', 48) + id + note);
+    if (notes) out.push('  ' + pad_('', 48) + notes);
     out.push('');
   });
 

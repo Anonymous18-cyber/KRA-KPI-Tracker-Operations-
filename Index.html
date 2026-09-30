@@ -1770,7 +1770,19 @@ function chartTrend(id){
 /* ================================= views ================================== */
 var V={};
 
-V.overview=function(){
+/* THE OVERVIEW IS ONE BUILDER WITH TWO MODES.
+ *
+ * Ruled 30 Sep 2026: Overview shows ONLY the summary by vertical, and
+ * everything else — the card rows, the scoring panels, the per-vertical
+ * tables, the month cards and the People list — belongs on Teams.
+ *
+ * Sliced rather than split into two functions, because every section here
+ * reads the same dozen computed values (people, list, st, fl, top, V1). Two
+ * functions would mean computing them twice or threading them through, and
+ * the one thing worse than a long function is the same arithmetic done in
+ * two places that can disagree. */
+function overviewBody(mode){            /* 'summary' | 'detail' */
+  var SUMMARY=(mode!=='detail'), DETAIL=(mode==='detail');
   var people=filteredEmployees(), list=filteredRows();
   var st=stats(list), ww=weightWarnings(), fl=flags(list);
   var crit=fl.filter(function(f){ return f.sev==='c'; });
@@ -1780,7 +1792,10 @@ V.overview=function(){
   var total=((S.model||{}).employees||[]).length;
 
   var out='';
-  out+='<div class="hdr"><div><h1>Overview</h1><div class="sub">'+
+  /* The page heading belongs to the page. In detail mode this content is
+     rendered UNDER the Teams heading, and a second <h1> saying "Overview"
+     halfway down it would read as a different page having started. */
+  if(SUMMARY) out+='<div class="hdr"><div><h1>Overview</h1><div class="sub">'+
     h(periodName(S.period))+' · '+st.n+' scorecard rows across '+
     (activeCount()?people.length+' of '+total+' people (filtered)'
                   :total+' people in '+((S.model||{}).teams||[]).length+' departments')+
@@ -1793,7 +1808,8 @@ V.overview=function(){
      aggregated via agg_kind. */
   /* the server sends only what this role may see, so say so — otherwise the
      counts read as the whole company */
-  if((S.model||{}).scoped){
+  /* said once, on the page whose counts it explains */
+  if(SUMMARY&&(S.model||{}).scoped){
     out+=note('i','You are seeing '+((S.model||{}).scope_kind==='self'
         ?'your own scorecard':'your team only'),
       'Your role is '+h(roleName((S.session||{}).role_id))+', so every count and chart '+
@@ -1830,6 +1846,13 @@ V.overview=function(){
       (ww.length>4?' and '+(ww.length-4)+' more':'')+'.');
   }
 
+
+  /* THE CARD ROWS AND THE SCORING PANELS STAY ON OVERVIEW. Ruled 30 Sep
+     2026, after the first cut moved them to Teams: they are the headline
+     numbers, and an Overview that opens with a table of verticals buries
+     them. Only the per-vertical detail, the month cards and the People list
+     moved. */
+  if(SUMMARY){
   /* ======================= THE TWO CARD ROWS =============================
    *
    * Row 1, EXECUTIVE SUMMARY: how many people, how well they are doing, and
@@ -1930,6 +1953,9 @@ V.overview=function(){
   /* one table per vertical, so the KRA columns are the ones that vertical
      actually owns */
   /* the roll-up first, then the per-POC detail below it */
+  }
+
+  if(SUMMARY){
   (function(){
     var sum=verticalSummary();
     if(sum) out+='<div class="mt">'+panel({flush:true,
@@ -1940,6 +1966,9 @@ V.overview=function(){
       body:sum})+'</div>';
   })();
 
+  }
+
+  if(DETAIL){
   out+='<div class="mt"><div class="cap" style="margin-bottom:9px">'+
     '<b style="color:var(--ink)">Targets and achieved</b> · '+
     ((S.model||{}).ytd
@@ -1984,8 +2013,12 @@ V.overview=function(){
   setTimeout(function(){
     perfDraw.forEach(function(c){ chartMonthly(c.id,c.rows); });
   },0);
+  }
   return out;
-};
+}
+
+/* Overview: the summary, and nothing else. */
+V.overview=function(){ return overviewBody('summary'); };
 
 /* People, banded by department.  The Team column is gone because the band
    above each group already says it — repeating it on every row was noise. */
@@ -2077,6 +2110,14 @@ V.teams=function(){
     body:'<div class="tw">'+body+'</tbody></table></div>'})+'</div>';
   setTimeout(function(){ if(stats().scored) chartTeams('tAvg','avg');
     chartTeams('tKpi','kpis'); },0);
+
+  /* EVERYTHING THAT USED TO BE ON OVERVIEW, below the Teams summary.
+     Ruled 30 Sep 2026: Overview shows only the summary by vertical.
+     Placed here rather than at the top so Teams leads with what Teams is
+     about, and brings its own filter row — the tiles and tables below it
+     all respond to those filters, and the bare period bar above does not
+     cover them. */
+  out+=overviewBody('detail');
   return out;
 };
 

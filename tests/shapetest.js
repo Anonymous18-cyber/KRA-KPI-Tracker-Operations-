@@ -814,5 +814,56 @@ ck('  on a copy, so the caller\'s array is not reordered underneath it',
 ck('the vertical scorecard sorts the same way',
    /people\.sort\(bySeniority\)/.test(page), true);
 
+console.log('\n--- Overview shows the summary; Teams shows the rest ---');
+/* Ruled 30 Sep 2026. One builder with two modes rather than two functions,
+   because every section reads the same dozen computed values and the one thing
+   worse than a long function is the same arithmetic in two places. */
+var ovb = grab('function overviewBody(mode){', 'V.overview=function(){');
+ck('there is one builder with two modes',
+   /var SUMMARY=\(mode!=='detail'\), DETAIL=\(mode==='detail'\);/.test(page), true);
+ck('Overview asks for the summary',
+   /V\.overview=function\(\)\{ return overviewBody\('summary'\); \};/.test(page), true);
+ck('Teams asks for the detail',
+   /out\+=overviewBody\('detail'\);/.test(page), true);
+ck('  exactly once', (page.match(/overviewBody\('detail'\)/g) || []).length, 1);
+
+/* The summary half */
+ck('the summary carries the vertical roll-up',
+   /if\(SUMMARY\)\{[\s\S]{0,400}?verticalSummary\(\)/.test(ovb), true);
+/* WHAT STAYS ON OVERVIEW. The card rows and the scoring panels are the
+   headline numbers; an Overview that opens with a table of verticals buries
+   them. Only the per-vertical detail, the month cards and the People list
+   moved to Teams. */
+var sumHalf = ovb.slice(ovb.indexOf('if(SUMMARY){'), ovb.indexOf('if(DETAIL){'));
+var detHalf = ovb.slice(ovb.indexOf('if(DETAIL){'));
+['THE TWO CARD ROWS', 'How KPIs are scored', 'Weightage measured',
+ 'verticalSummary()'].forEach(function (frag) {
+  ck('  "' + frag.slice(0, 22) + '" stays on Overview', sumHalf.indexOf(frag) >= 0, true);
+});
+["title:'People'", 'targetsPanel()', 'month by month'].forEach(function (frag) {
+  ck('  "' + frag.slice(0, 22) + '" moved to Teams', detHalf.indexOf(frag) >= 0, true);
+  ck('    and is not also on Overview', sumHalf.indexOf(frag) >= 0, false);
+});
+
+/* A second <h1> halfway down Teams would read as a new page starting. */
+ck('the Overview heading is only emitted in summary mode',
+   /if\(SUMMARY\) out\+='<div class="hdr"><div><h1>Overview<\/h1>/.test(ovb), true);
+ck('  and the scope note likewise',
+   /if\(SUMMARY&&\(S\.model\|\|\{\}\)\.scoped\)\{/.test(ovb), true);
+/* The moved tiles and tables are filtered, so the filter row has to travel
+   with them — a bare period bar would not cover them. */
+ck('the filter row travels with the detail',
+   ovb.indexOf('out+=filterRow();') >= 0, true);
+ck('and Teams keeps its own period bar above its own charts',
+   /V\.teams=function\(\)\{[\s\S]{0,400}?out\+=periodBar\(\);/.test(page), true);
+/* Nothing should have been dropped in the move. */
+ck('the month-by-month cards came across',
+   ovb.indexOf('month by month') >= 0, true);
+/* The per-vertical tables are rendered by targetsPanel(), which calls
+   verticalTable() internally — asserting the inner name failed for a
+   function that had moved correctly. */
+ck('  and the per-vertical tables',
+   ovb.indexOf('targetsPanel()') >= 0, true);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -656,5 +656,63 @@ ck('  and the rest are counted on one line of their own',
 ck('  rather than dropped, which would make the counts not add up',
    /notReached\+\+/.test(tv), true);
 
+console.log('\n--- dispatch documentation: all three must be Yes ---');
+eval(grab('var OMP_DOCS_NOTE_', 'function ompDocsAchievements_('));
+var NOV = new Date(2026, 10, 5);
+function dc(a, b, c, row) {
+  return ompDocsOne_(row || mmrow(day(2026, 7, 5)), [a, b, c], '2026-08', NOV);
+}
+ck('all three Yes is a hit',            dc('Yes', 'Yes', 'Yes').out, 'hit');
+ck('one No is a miss',                  dc('Yes', 'No', 'Yes').out, 'miss');
+ck('  and it says how many were short', dc('Yes', 'No', 'Yes').why,
+   '1 of 3 required document(s) missing');
+ck('two No is still one miss, not two', dc('No', 'No', 'Yes').out, 'miss');
+ck('case and spacing do not matter',    dc(' yes ', 'YES', 'Yes').out, 'hit');
+
+/* NA means the document was not required. A document that never had to exist
+   cannot be missing, so it is ignored and the rest are judged. */
+ck('an NA column is ignored, not counted against',
+   dc('Yes', 'NA', 'Yes').out, 'hit');
+ck('  and the report says so',
+   /1 not applicable/.test(dc('Yes', 'NA', 'Yes').why), true);
+ck('NA does not rescue a real No',      dc('No', 'NA', 'Yes').out, 'miss');
+ck('all three NA leaves the denominator', dc('NA', 'N.A.', 'Not Applicable').out, 'skip');
+ck('  saying nothing was required',
+   /no documents were required/.test(dc('NA', 'NA', 'NA').why), true);
+
+/* A blank is a document that should exist and was not recorded. Ignoring it
+   would let an unfilled row read as a pass. */
+ck('a blank is a miss, not an absence',  dc('Yes', '', 'Yes').out, 'miss');
+ck('  and says it was never recorded',
+   /1 of 3 not recorded at all/.test(dc('Yes', '', 'Yes').why), true);
+
+/* describeOmpTracker reported more distinct values in these columns than had
+   ever been seen — the Tracking column hid "SIM track" the same way. */
+ck('an unrecognised value is NOT scored as a pass',
+   dc('Yes', 'Partly', 'Yes').out === 'hit', false);
+ck('  nor as a miss',  dc('Yes', 'Partly', 'Yes').out === 'miss', false);
+ck('  it is reported', dc('Yes', 'Partly', 'Yes').out, 'unruled');
+ck('  naming the column and the word',
+   /weighment="Partly"/.test(dc('Yes', 'Partly', 'Yes').why), true);
+
+console.log('\n--- and the denominator ---');
+ck('a cancelled shipment leaves it',
+   dc('Yes', 'Yes', 'Yes', mmrow(day(2026,7,5), 'CANCELLED', 'CANCELLED')).out, 'skip');
+ck('one that never left has no documents to get wrong',
+   dc('Yes', 'Yes', 'Yes', mmrow(null, 'DRAFT', 'Ready to Dispatch')).out, 'skip');
+ck('the current month is not scored',
+   ompDocsOne_(mmrow(day(2026,10,2)), ['Yes','Yes','Yes'], '2026-11', NOV).out, 'skip');
+
+var dimp2 = grab('function ompDocsAchievements_(', '/** DRY RUN — writes nothing. */');
+ck('every combination is printed against its verdict',
+   /EVERY COMBINATION, AND THE VERDICT IT RECEIVED/.test(dimp2), true);
+ck('the rate is stored as a fraction', /actual: w\.rate,/.test(dimp2), true);
+ck('a hand-typed number is never overwritten',
+   /indexOf\(OMP_DOCS_NOTE_\) < 0/.test(dimp2), true);
+ck('the dry run is on the allow list',
+   grab('var DIAG_FUNCTIONS_ = {', '};').indexOf('previewOmpDocs') >= 0, true);
+ck('  and the writer is not',
+   grab('var DIAG_FUNCTIONS_ = {', '};').indexOf('importOmpDocs:') >= 0, false);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
